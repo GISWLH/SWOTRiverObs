@@ -528,3 +528,34 @@ class RiverObs:
         else:
             self.populated_nodes = to_list
             self.unpopulated_nodes = from_list
+
+    def mask_pixels(self, good_mask):
+        """
+        Removes pixels from the RiverObs class based on an input mask. The
+        input mask should be True for pixel indices we want to keep and False
+        for pixels that should be removed.
+        Inputs
+        :param good_mask: a boolean array of pixel indices that is True for
+        pixels we want to keep, and False for pixels we want to remove.
+        """
+
+        # reshape good_mask in order to update RiverObs in_channel mask
+        indx = np.argwhere(self.in_channel)[:, 0][good_mask]
+        new_in_channel = np.zeros(self.in_channel.shape, dtype=bool)
+        new_in_channel[indx] = True
+        self.in_channel = new_in_channel
+
+        # Recompute things set in RiverObs constructor
+        self.index = self.index[good_mask]
+        self.d = self.d[good_mask]
+        self.x = self.x[good_mask]
+        self.y = self.y[good_mask]
+        self.s = self.s[good_mask]
+        self.n = self.n[good_mask]
+        self.nedited_data = len(self.d)
+        self.populated_nodes, self.obs_to_node_map = self.get_obs_to_node_map(
+            self.index, self.minobs)
+
+        self.add_obs('xo', self.xobs)
+        self.add_obs('yo', self.yobs)
+        self.load_nodes(['xo', 'yo'])

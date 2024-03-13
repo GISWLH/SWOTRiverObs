@@ -328,7 +328,7 @@ class L2PixcToRiverTile(object):
         try:
             import cnes.modules.geoloc.scripts.geoloc_river as geoloc_river
         except ModuleNotFoundError:
-            LOGGER.warning("Cant load CNES improved geolocation, skipping!")
+            LOGGER.warning("Can't load CNES improved geolocation, skipping!")
             return
 
         cnes_sensor = geoloc_river.Sensor.from_pixc(self.pixc_file)
@@ -352,27 +352,27 @@ class L2PixcToRiverTile(object):
     def match_pixc_idx(self):
         """Matches the pixels from pixcvector to input pixc"""
         LOGGER.info('match_pixc_idx')
-        with netCDF4.Dataset(self.pixc_file, 'r') as ifp:
-            nr_pixels = ifp.groups['pixel_cloud'].interferogram_size_range
-            azi_index = ifp.groups['pixel_cloud']['azimuth_index'][:]
-            rng_index = ifp.groups['pixel_cloud']['range_index'][:]
+        with netCDF4.Dataset(self.pixc_file, 'r') as pixc_in:
+            nr_pixels = pixc_in.groups['pixel_cloud'].interferogram_size_range
+            azi_index = pixc_in.groups['pixel_cloud']['azimuth_index'][:]
+            rng_index = pixc_in.groups['pixel_cloud']['range_index'][:]
 
             pixc_idx = np.array(azi_index * int(nr_pixels) + rng_index)
 
-        with netCDF4.Dataset(self.index_file, 'a') as ofp:
+        with netCDF4.Dataset(self.index_file, 'a') as pixcvec_out:
             pixcvec_idx = np.array(
-                ofp.variables['azimuth_index'][:] * int(nr_pixels) +
-                ofp.variables['range_index'][:])
+                pixcvec_out.variables['azimuth_index'][:] * int(nr_pixels) +
+                pixcvec_out.variables['range_index'][:])
 
             indx, indx_pv, indx_pixc = np.intersect1d(
                 pixcvec_idx, pixc_idx, return_indices=True)
 
             # re-order PIXCVecRiver datasets to ordering of pixc_index.
-            for dset in ofp.variables.keys():
-                data = ofp.variables[dset][:]
-                ofp.variables[dset][:] = data[indx_pv]
+            for dset in pixcvec_out.variables.keys():
+                data = pixcvec_out.variables[dset][:]
+                pixcvec_out.variables[dset][:] = data[indx_pv]
 
-            ofp.variables['pixc_index'][:] = indx_pixc.astype('int32')
+            pixcvec_out.variables['pixc_index'][:] = indx_pixc.astype('int32')
 
     def build_products(self):
         """Constructs the L2HRRiverTile data product / updates the index file"""

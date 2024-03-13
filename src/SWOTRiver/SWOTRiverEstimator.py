@@ -752,7 +752,6 @@ class SWOTRiverEstimator(SWOTL2):
                         scalar_max_width=600.,
                         minobs=10,
                         min_fit_points=3,
-                        use_width_db=False,
                         ds=None,
                         refine_centerline=False,
                         smooth=1.e-2,
@@ -774,8 +773,6 @@ class SWOTRiverEstimator(SWOTL2):
             Minimum number of observations for valid node.
         min_fit_points : int, default 3
             Minimum number of populated nodes required for height/slope fit
-        use_width_db : bool, default False
-            Use the width data base for setting widths?
         ds : float, optional
             Separation between centerline nodes (in m). If None, uses reach
             points.
@@ -802,10 +799,10 @@ class SWOTRiverEstimator(SWOTL2):
         if self.use_ext_dist_coef:
             river_obs_list, reach_idx_list, ireach_list = \
                 self.assign_reaches_ext_dist_coef(
-                    scalar_max_width, minobs, use_width_db, ds)
+                    scalar_max_width, minobs, ds)
         else:
             river_obs_list, reach_idx_list, ireach_list = \
-                self.assign_reaches(scalar_max_width, minobs, use_width_db, ds)
+                self.assign_reaches(scalar_max_width, minobs, ds)
 
 
         LOGGER.info('process_reaches: processing nodes')
@@ -813,20 +810,15 @@ class SWOTRiverEstimator(SWOTL2):
         reach_zips = zip(river_obs_list, reach_idx_list, ireach_list)
         for river_obs, reach_idx, ireach in reach_zips:
 
-            if use_width_db:
-                max_width = self.get_max_width_from_db(reach_idx)
-                LOGGER.debug('max_width read')
+            try:
+                # probably should scale this to look some fraction
+                # farther than the database width
+                max_width = (
+                    self.reaches[ireach].metadata['Wmean'] * np.ones(
+                        np.shape(self.reaches[i_reach].x)))  # *2.0
 
-            else:
-                try:
-                    # probably should scale this to look some fraction
-                    # farther than the database width
-                    max_width = (
-                        self.reaches[ireach].metadata['Wmean'] * np.ones(
-                            np.shape(self.reaches[i_reach].x)))  # *2.0
-
-                except KeyError:
-                    max_width = scalar_max_width
+            except KeyError:
+                max_width = scalar_max_width
 
             # Ugly way process_reach/process_node uses the data
             self.river_obs = river_obs
@@ -836,7 +828,6 @@ class SWOTRiverEstimator(SWOTL2):
                 ireach,
                 reach_idx,
                 scalar_max_width=scalar_max_width,
-                use_width_db=use_width_db,
                 max_width=max_width,
                 ds=ds,
                 refine_centerline=refine_centerline,
@@ -921,7 +912,6 @@ class SWOTRiverEstimator(SWOTL2):
     def assign_reaches(self,
                        scalar_max_width,
                        minobs=10,
-                       use_width_db=False,
                        ds=None,
                        use_ext_dist_coef=False):
         """
@@ -1058,29 +1048,8 @@ class SWOTRiverEstimator(SWOTL2):
 
         # iterate over river_obs again to set it so optimized
         for ii, river_obs in enumerate(river_obs_list):
-
             mask_keep = reach_ind[river_obs.in_channel] == ii
-
-            # set in_channel mask to exclude the nodes to drop
-            river_obs.in_channel[reach_ind != ii] = False
-
-            # Drop pixels that were double-assigned to reaches and
-            # recompute things set in RiverObs constructor
-            river_obs.index = river_obs.index[mask_keep]
-            river_obs.d = river_obs.d[mask_keep]
-            river_obs.x = river_obs.x[mask_keep]
-            river_obs.y = river_obs.y[mask_keep]
-            river_obs.s = river_obs.s[mask_keep]
-            river_obs.n = river_obs.n[mask_keep]
-            river_obs.nedited_data = len(river_obs.d)
-            river_obs.populated_nodes, river_obs.obs_to_node_map = \
-                river_obs.get_obs_to_node_map(river_obs.index,
-                                              river_obs.minobs)
-
-            # Recompute things set in IteratedRiverObs constructor
-            river_obs.add_obs('xo', river_obs.xobs)
-            river_obs.add_obs('yo', river_obs.yobs)
-            river_obs.load_nodes(['xo', 'yo'])
+            river_obs.mask_pixels(mask_keep)
 
         # Iterate through and only return reaches with pixels in them.
         # (don't iterate and modify!)
@@ -1102,7 +1071,7 @@ class SWOTRiverEstimator(SWOTL2):
         return river_obs_list_out, reach_idx_list_out, ireach_list_out
 
     def assign_reaches_ext_dist_coef(
-            self, scalar_max_width, minobs=10, use_width_db=False, ds=None):
+            self, scalar_max_width, minobs=10, ds=None):
         """
         Does the reach assignments using ext_dist_coef and the outputs from
         assign_reaches.
@@ -1111,7 +1080,7 @@ class SWOTRiverEstimator(SWOTL2):
         # Note we do the ext_dist_coef processing out of assign_reaches to
         # get the desired behavior
         river_obs_list, reach_idx_list, ireach_list = self.assign_reaches(
-            scalar_max_width, minobs, use_width_db, ds)
+            scalar_max_width, minobs, ds)
 
         # Iterate through and only return reaches with pixels in them.
         river_obs_list_out = []
@@ -1141,29 +1110,8 @@ class SWOTRiverEstimator(SWOTL2):
 
             mask_keep = np.logical_and(ds <= extreme_dist[river_obs.index],
                                        dn <= extreme_dist[river_obs.index])
-            indx = np.argwhere(river_obs.in_channel)[:,0][mask_keep]
-            new_in_channel = np.zeros(river_obs.in_channel.shape, dtype=bool)
-            new_in_channel[indx] = True
 
-            # update river_obs in channel mask
-            river_obs.in_channel = new_in_channel
-
-            # Recompute things set in RiverObs constructor
-            river_obs.index = river_obs.index[mask_keep]
-            river_obs.d = river_obs.d[mask_keep]
-            river_obs.x = river_obs.x[mask_keep]
-            river_obs.y = river_obs.y[mask_keep]
-            river_obs.s = river_obs.s[mask_keep]
-            river_obs.n = river_obs.n[mask_keep]
-            river_obs.nedited_data = len(river_obs.d)
-            river_obs.populated_nodes, river_obs.obs_to_node_map = \
-                river_obs.get_obs_to_node_map(river_obs.index,
-                river_obs.minobs)
-
-            # Recompute things set in IteratedRiverObs constructor
-            river_obs.add_obs('xo', river_obs.xobs)
-            river_obs.add_obs('yo', river_obs.yobs)
-            river_obs.load_nodes(['xo', 'yo'])
+            river_obs.mask_pixels(mask_keep)
 
             if len(river_obs.populated_nodes) > 0:
                 river_obs_list_out.append(river_obs)
@@ -1177,7 +1125,6 @@ class SWOTRiverEstimator(SWOTL2):
                      reach_id,
                      reach_idx=None,
                      scalar_max_width=600.,
-                     use_width_db=False,
                      max_width=None,
                      ds=None,
                      refine_centerline=False,
@@ -1200,8 +1147,6 @@ class SWOTRiverEstimator(SWOTL2):
             to the reach_id.
         scalar_max_width : float, default 600
             How far away to look for points
-        use_width_db : bool, default False
-            Use the width data base for setting widths?
         max_width: float or array_like, optional
             Maximum width to use for accepting points. From width database or
             apriori.
@@ -1224,10 +1169,11 @@ class SWOTRiverEstimator(SWOTL2):
         # Refine the centerline, if desired
         # get the number of node in the reach and only refine if there are
         # enough to do spline
-        numNodes = len(np.unique(self.river_obs.index))
-        enough_nodes = True if numNodes - 1 > self.river_obs.k else False
+        num_nodes = len(np.unique(self.river_obs.index))
+        enough_nodes = True if num_nodes - 1 > self.river_obs.k else False
         LOGGER.debug(
-            "process_node for reach_id: {}; {} nodes".format(reach_idx, numNodes))
+            "process_node for reach_id: {}; {} nodes".format(
+                reach_idx, num_nodes))
 
         if refine_centerline and enough_nodes:
             self.river_obs.iterate(
@@ -1302,7 +1248,7 @@ class SWOTRiverEstimator(SWOTL2):
                                   self.h_flg[self.river_obs.in_channel],
                                   self.area_flg[self.river_obs.in_channel])
 
-        # Load these datasets from input file and add obsevations to
+        # Load these datasets from input file and add observations to
         # self.river_obs.
         dsets = [
             'h_noise', 'h_flg', 'wse_class_flg', 'area_flg', 'sig0_flg', 'lon',
@@ -1375,9 +1321,9 @@ class SWOTRiverEstimator(SWOTL2):
 
         # Compute number of good+sus pixels in wse / area masks
         n_pix_wse_good_sus = np.array(
-            self.river_obs.get_node_stat('countGood', 'h_flg'))
+            self.river_obs.get_node_stat('count_good', 'h_flg'))
         n_pix_area_good_sus = np.array(
-            self.river_obs.get_node_stat('countGood', 'area_flg'))
+            self.river_obs.get_node_stat('count_good', 'area_flg'))
 
         # Use good/suspect aggregations if number of pixels used is greater or
         # equal to num_good_sus_pix_thresh_(wse/area)
@@ -1406,9 +1352,9 @@ class SWOTRiverEstimator(SWOTL2):
         ds = np.asarray(self.river_obs.get_node_stat('value', 'ds'))
 
         # number of good heights
-        nobs_h = np.asarray(self.river_obs.get_node_stat('countGood', 'h_flg'))
+        nobs_h = np.asarray(self.river_obs.get_node_stat('count_good', 'h_flg'))
         nobs_h[~mask_good_sus_wse] = np.asarray(
-            self.river_obs.get_node_stat('countGood', 'wse_class_flg')
+            self.river_obs.get_node_stat('count_good', 'wse_class_flg')
             )[~mask_good_sus_wse]
 
         # heights using only "good" heights
@@ -1690,7 +1636,7 @@ class SWOTRiverEstimator(SWOTL2):
 
         # Number of pixels that are in wse class types for each node
         n_pix_wse_class = np.array(
-            self.river_obs.get_node_stat('countGood', 'wse_class_flg'))
+            self.river_obs.get_node_stat('count_good', 'wse_class_flg'))
 
         # Number of pixels used for wse/area/sig0 for each node
         n_pix_wse = n_pix_wse_good_sus
@@ -1700,7 +1646,7 @@ class SWOTRiverEstimator(SWOTL2):
         n_pix_area[~mask_good_sus_area] = n_pix[~mask_good_sus_area]
 
         n_pix_sig0 = np.array(
-            self.river_obs.get_node_stat('countGood', 'sig0_flg'))
+            self.river_obs.get_node_stat('count_good', 'sig0_flg'))
 
         # Number of pixels with suspect wse/area/sig0 used in aggregations for
         # each node
@@ -2004,7 +1950,7 @@ class SWOTRiverEstimator(SWOTL2):
 
         hh = river_reach.wse
         wse_r_u = river_reach.wse_r_u
-        ww = 1/(wse_r_u**2)  # TO DO: validate wse_r_u here
+        ww = 1/(wse_r_u**2)
         SS = np.c_[ss, np.ones(len(ss), dtype=ss.dtype)]
         mask = river_reach.mask
 
@@ -2074,7 +2020,7 @@ class SWOTRiverEstimator(SWOTL2):
                 reach_stats['slope'] = (wse_opt[0] - wse_opt[-1]) / dx
                 reach_stats['height'] = np.mean(wse_opt)
                 reach_stats['slope_r_u'] = slope_u * 0.0001    # m/m
-                reach_stats['height_r_u'] = height_u * 0.01  # m
+                reach_stats['height_r_u'] = height_u * 0.01    # m
                 reach_stats['slope_u'] = np.sqrt(
                     SLOPE_SYS_UNCERT**2 + reach_stats['slope_r_u']**2)
                 reach_stats['height_u'] = np.sqrt(

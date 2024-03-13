@@ -100,7 +100,7 @@ class RiverNode:
         """Return the number of points in the node."""
         return self.ndata
 
-    def countGood(self, goodvar):
+    def count_good(self, goodvar):
         """Return the number of good points in the node."""
         tmp = np.zeros(self.ndata)
         #exec('tmp[self.%s]=1'%goodvar)
