@@ -2483,7 +2483,7 @@ class SWOTRiverEstimator(SWOTL2):
         if first_node is not None and this_len is not None:
             # get reach node number and apply neighbor reach filters
             this_reach_node_num = mask[first_node:first_node+this_len].sum()
-            if mask.sum() > min_fit_points:
+            if this_reach_node_num > min_fit_points:
                 mask = self.neighbor_reach_filter(SS[:, 0], mask, node_q,
                                                first_node, this_len)
         else:
