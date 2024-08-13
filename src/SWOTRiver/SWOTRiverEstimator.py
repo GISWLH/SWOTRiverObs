@@ -327,6 +327,7 @@ class SWOTRiverEstimator(SWOTL2):
                  num_good_sus_pix_thresh_wse=None,
                  num_good_sus_pix_thresh_area=None,
                  use_bright_land=None,
+                 reach_pct_good_sus_thresh=None,
                  **proj_kwds):
 
         self.trim_ends = trim_ends
@@ -351,6 +352,7 @@ class SWOTRiverEstimator(SWOTL2):
         self.num_good_sus_pix_thresh_wse = num_good_sus_pix_thresh_wse
         self.num_good_sus_pix_thresh_area = num_good_sus_pix_thresh_area
         self.use_bright_land = use_bright_land
+        self.reach_pct_good_sus_thresh = reach_pct_good_sus_thresh
 
         # Classification inputs
         self.class_kwd = class_kwd
@@ -849,25 +851,30 @@ class SWOTRiverEstimator(SWOTL2):
                     river_reach_collection_no_outlier_flag, river_reach,
                     ireach)
                 ww = 1 / (wse_r_u ** 2)
-                reach_mask, valid_wse_mask = self.get_reach_mask(
-                    ss, wse, ww, node_q, min_fit_points, first_node, this_len)
+                reach_mask, valid_wse_mask, wse_outlier_mask = (
+                    self.get_reach_mask(ss, wse, ww, node_q, min_fit_points,
+                                        first_node, this_len))
                 river_reach.mask = reach_mask[first_node:first_node+this_len][
                     river_reach.populated_nodes]
                 river_reach.valid_wse_mask = valid_wse_mask[
                                              first_node:first_node+this_len][
                     river_reach.populated_nodes]
+                wse_outlier_mask = \
+                wse_outlier_mask[first_node:first_node + this_len][
+                    river_reach.populated_nodes]
+
             else:
                 ww = 1 / (river_reach.wse_r_u ** 2)
-                river_reach.mask, river_reach.valid_wse_mask = (
-                    self.get_reach_mask(river_reach.node_ss, river_reach.wse,
+                river_reach.mask, river_reach.valid_wse_mask, wse_outlier_mask \
+                    = self.get_reach_mask(river_reach.node_ss, river_reach.wse,
                                         ww, river_reach.node_q,
-                                        min_fit_points))
+                                        min_fit_points)
 
             # Use node mask to set wse_outlier bit in node_q_b
-            river_reach.node_q_b[~river_reach.mask] |= (
+            river_reach.node_q_b[~wse_outlier_mask] |= (
                 SWOTRiver.products.rivertile.QUAL_IND_WSE_OUTLIER)
             # update summary qual flag to include outlier nodes
-            river_reach.node_q[~river_reach.mask] = 3
+            river_reach.node_q[~wse_outlier_mask] = 3
 
             river_reach_collection.append(river_reach)
 
@@ -2520,7 +2527,13 @@ class SWOTRiverEstimator(SWOTL2):
         elif (self.outlier_method is not None and
               this_reach_node_num <= min_fit_points):
             mask = np.zeros(len(hh), dtype=bool)
-        return mask, valid_wse_mask
+
+        wse_outlier_mask = mask.copy()
+        pct_good_sus = 100 * (node_q[mask] < 2).sum() / mask.sum()
+        if pct_good_sus > self.reach_pct_good_sus_thresh:
+            mask[node_q >= 2] = False
+
+        return mask, valid_wse_mask, wse_outlier_mask
 
     def flag_outliers(self, wse, flow_dist, weights, node_q, input_mask,
                       reach_outlier_abs_thresh, first_node=None,
@@ -2574,6 +2587,11 @@ class SWOTRiverEstimator(SWOTL2):
         """
         # Copy input_mask to mask (will be returned as output)
         mask = input_mask.copy()
+
+        pct_good_sus = 100 * (node_q < 2).sum() / mask.sum()
+        if pct_good_sus > self.reach_pct_good_sus_thresh:
+            weights[node_q >= 2] = 0
+
         if self.outlier_method == 'iterative_linear':
             current_ind = self.iterative_linear(wse, flow_dist, weights,
                                                 self.outlier_iter_num,
@@ -3142,7 +3160,9 @@ class SWOTRiverEstimator(SWOTL2):
             quality = quality.data
 
         # duplicate data to make good observations to have more weight,
-        # good (*4), suspect (*3), degraded (*2) and bad nodes (*1)
+        # if fraction of good and suspect nodes > reach_pct_good_sus_thresh:
+        # good(*3), suspect(*2)
+        # else: good (*4), suspect (*3), degraded (*2) and bad nodes (*1)
         good_ind = quality == 0
         suspect_ind = quality == 1
         degraded_ind = quality == 2
@@ -3150,12 +3170,22 @@ class SWOTRiverEstimator(SWOTL2):
                                 axis=None)
         y_good = np.concatenate((y[good_ind], y[good_ind], y[good_ind]),
                                 axis=None)
-        x_suspect = np.concatenate((x[suspect_ind], x[suspect_ind]), axis=None)
-        y_suspect = np.concatenate((y[suspect_ind], y[suspect_ind]), axis=None)
+        x_suspect = np.concatenate((x[suspect_ind], x[suspect_ind]),
+                                   axis=None)
+        y_suspect = np.concatenate((y[suspect_ind], y[suspect_ind]),
+                                   axis=None)
         x_degraded = x[degraded_ind]
         y_degraded = y[degraded_ind]
-        x_dup = np.concatenate((x, x_good, x_suspect, x_degraded), axis=None)
-        y_dup = np.concatenate((y, y_good, y_suspect, y_degraded), axis=None)
+
+        pct_good_sus = 100 * (quality < 2).sum() / len(x)
+        if pct_good_sus > self.reach_pct_good_sus_thresh:
+            x_dup = np.concatenate((x_good, x_suspect), axis=None)
+            y_dup = np.concatenate((y_good, y_suspect), axis=None)
+        else:
+            x_dup = np.concatenate((x, x_good, x_suspect, x_degraded),
+                                   axis=None)
+            y_dup = np.concatenate((y, y_good, y_suspect, y_degraded),
+                                   axis=None)
 
         # in case the older version of param file is used
         if 0 < self.outlier_breakpoint_min_dist < 1:
